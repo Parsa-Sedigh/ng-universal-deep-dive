@@ -1286,4 +1286,210 @@ Then we need to find some way of transferring that data which was already fetche
 another req to server.
 So we need a mechanism for transferring state(the data that was fetched on server for example the course object) from server side
 application, into the client side app. */
-/* 17. 2. Reviewing the Course Component and the Course Resolver */
+/* 17. 2. Reviewing the Course Component and the Course Resolver:
+In certain situations, the ng universal server side application that is being server side rendered or pre rendered, needs to do some
+api requests in order to fetch data from the backend and generate the corresponding html(that the user wants that html for viewing the page) and
+Important: We want to avoid the CLIENT side application when it gets kicked in and started on the browser to have to fetch that information AGAIN.
+How we can solve this problem?
+First let's identify the data that we wanna somehow transfer between the server side and the client side. So in server side, we get some data
+and then use it in initial html payload somehow(or use them for calculation in TS services or ... and then add calculated used data to html) (so
+that initial html payload will be come from server side app, whenever we refresh the page or type in url and hit enter or enter the page of
+website through google).
+
+The requests that are shown in network tab of devtools were made by client side application.
+
+The duplicate request is made by client side application in startup time but that same request was already made a moment ago by the server side app,
+when we server side rendered our page and fetch the data needed for html payload. So how we can avoid that http request that is being made
+twice, once by server side application and another, by client sie app?
+In order to solve the problem(even if you're using a resolver to fetch data for that comp,) we need to adapt the implementation of resolver or
+comp, for using transferState api. It's a special service that allows us to transfer data from server application into client application.
+Then, the client application(or if you have resolver for that route which is being SSR, the resolver will get the data from server side app)
+is gonna get that data the first time that the page gets loaded and that resolver will provide that data to the responsible comp, without having to
+fetch that data again from api, by using a duplicate http request. */
+/* 18. 3. Transfering State from the Server to the Client with the State Transfer API:
+Let's adapt resolver to using transferState api. Our final goal, is to for example find a way to transfer the course object which is
+provided by the CourseResolver to the CourseComponent and we wanna somehow transfer that course object between server side application and
+the client side application.
+Now inject transferState into resolver. Now at this point, before STARTING to use transferState, it's crucial to shut down the live development
+server, otherwise you might run into a compilation error. Now how transferState service work?
+We can call get(), set(), remove() and hasKey() . So it's like a key value data store where we can store data using set(), we can verify if the
+data exists in our store, using hasKey() and we can retrieve the data using get(), we can also remove any data from that data store using remove() .
+
+So we can solve the problem of duplicate http request for fetching again the course object in resolver for example. We're gonna fetch
+the course object only ONCE in server, we're gonna store it in our transferState data store and we're gonna retrieve it again on the client
+side. In order to be able to use the transferState service, we're gonna need a transfer state key. It's a key that identifies the state object that
+we wanna transfer between the server and client and in makeStateKey() we give define a name in string and then it needs to be a unique key per object
+that we wanna transfer, so let's append the courseId.
+As you can see, we can store different courses in our state transfer data store by using different keys. Also you can provide the type of object
+that is being stored in <> and as we're storing a course object, we passed Course in <>. So now we have a data store key called COURSE_KEY that
+allows us to store and retrieve course objects in a type safe way.
+EX)
+const COURSE_KEY = makeStateKey<Course>('courseKey-' + courseId);
+
+Now how we're gonna use that key in order to implement the data transfer between the client and server?
+On the server we're going to be doing those http requests and fetch the course from the api, then, still on the server, we wanna store the fetched
+course on the transferState data store using the COURSE_KEY. Then on the client or when the application starts up, first, before anything else,
+we're gonna check the transferState store to see if a course is already there by using the key. If the course is there, we're gonna fetch it from
+the DATA STORE(all of this is doing in resolver) and we're gonna provide it to courseComponent via the resolver. Then we're gonna delete the
+course from the data store because we don't need it there anymore and we have already retrieved it. From there, the transfer state between the
+server and the client is completed and the client side app will continue to work normally.
+
+We're gonna have two cases: Either the Course that we want containing a particular courseId is already present on the transferState store or the course
+is not present yet. So let's check for presence of the course:
+When there's no course in our datastore(the else branch), we need to call the api and retrieve our course using service method and this situation where
+we don't have the key in datastore can happen in a couple of situations. It could happen on the server, when we're trying to server side
+render the application AND we have NOT YET loaded the course from api, but the else branch might also happen on the client side whenever we're
+navigating into this page or any other course page using the angular router. In that case, if we're already on the client and the application has
+finished starting up, then in that case our datastore will already have been emptied out. So in that case, we wanna repeat the call of the method
+of service(the else branch).
+So let's suppose we're in our backend and server side rendering our app, therefore we're in else branch and therefore, we have not yet stored the
+course in our datastore because we have not fetched it yet.
+So what we wanna do after fetching the course from the api?
+We need to store it in our datastore in order to be able to transfer it to the client side. We can do it by using tap() and there we store it in
+datastore.
+Inside the tap(), in case that we're on server, we want to store it in the transferState datastore. So let's first check if we're indeed on the
+server by using isPlatformServer() and pass it the current platformId and you can inject the current platform that we're on it, by using the
+PLATFORM_ID injectable. So with that platformId we can determine if we're on the server or on the client.
+Now if we're indeed on the server, then after fetching the course from api by using that service method, we wanna store that returned data to
+our transferState store by populating the corresponding key which is COURSE_KEY with the value that we wanna store which in this case is course object.
+So now at this point, our app is server side rendered.
+Important: We have fetched the course from api and used it to render the page and generate the html and ALSO we have saved the course and attached it
+ into the html payload in order for the course object to be available to the client side application when the client side app starts up.
+So the browser will load our initial html and the client side app is gonna get kick started. So what will happen there?
+Well, again the course resolver is gonna get triggered because we're on the route that will call that resolver which that route is for example /courses/01.
+So the client side app is gonna trigger the resolver in order to TRY to fetch the course(which it's type is specified in <> of return value of resolve() method of
+resolver) that the course.component needs. So in that case, we will be in if branch of below, where the transferState datastore DOES CONTAIN our course that we have
+stored on the backend. So what will happen there?
+Well, because the data(course) is present on the transferState datastore, we want to first fetch it from that datastore and in get() we also need to provide a default
+object(actually a value) in case that there's no course stored under the key we specified. Now we have received the data in our frontend, we want to remove it from
+transferState data store. Because we already have it and we wanna provide it to our course.component.ts .
+With that, we have both fetched the course object which was transferred from the server onto the client and we have removed it from the transfer data store.
+Now we have to return that fetched data to any component that is associated with this course resolver. So we need to return an Observable of Course or Observable<Course>, just
+like what we defined as returned value of resolve method and we can create it with of() factory method and pass it the only value which would be emitted which is gonna be
+the course object. So of(course) is gonna create an observable that is gonna emit only one value and then it's gonna complete.
+
+EX)course.resolver.ts:
+resolve(route, state) {
+    const courseId = route.params['id'];
+    const COURSE_KEY = makeStateKey('courseKey-' + courseId);
+
+   if (this.transferState.hasKey(COURSE_KEY)) {
+    const course = this.transferState.get(COURSE_KEY, null);
+    this.transferState.remove(COURSE_KEY);
+    return of(course);
+} else {
+    return this.courseService.findCourseById(courseId);
+    .pipe(
+        first(),
+        tap(course => {
+            if (isPlatformServer(this.platformId)) {
+               this.transferState.set(COURSE_KEY, course);
+            }
+        })
+    );
+}
+}
+
+Now we have finished the implementation of course.resolver . Now let's understand how it works at runtime.*/
+/* 19. 4. Angular Universal State Transfer - Runtime Demo:
+Now let's see the new implementation of our course.resolver in runtime. We're transferring the course object from server side application into
+our client side app.
+
+In order to use TransferState service, we need to add some special config to our app.module . So right below BrowserModule.withServerTransition({...}),
+add BrowserTransferStateModule. That's the module that contains the client side version of TransferState service. So that's a service that runs in the
+browser that allows us to retrieve and store data onto the html page itself.
+Now besides the BrowserTransferStateModule, we also need a server side version of that service so import that server side version in our app.server.module .
+So there, below the ServerModule of our server side application(app.server.module), add ServerTransferStateModule.
+
+So the TransferStateService has actually two different versions, one for client and one for server. Now run npm run dev:ssr
+which starts ng universal development server.
+
+Now if you reload the page or type and enter or enter through google to this page, we get the server side rendered or initial html of the page
+with application shell and if you see the network log, you can see this time around, we won't have duplicate reqs.
+
+Now where did the course object get stored, when it got transferred between the client and the server?
+For that, let's inspect the content of initial html payload that we received from the server which is in view page source.
+Important: The TransferState uses that html payload in order to transfer state from the server onto the client.
+In there, if you scroll down to very bottom of that document which is the html payload that was server side rendered, we're gonna see a
+<script id="serverApp-state" type="application/json">{&q;courseKey-01&q:...}</script> and by seeing type="application/json" we understand that the
+content of this tag is of type json and therefore you can see some info with html escape json format which is for course object that was transferred with
+transferState.
+
+So that <script> tag which was embedded on the <body> of our server side rendered html payload is how the transferState api works.
+On the server, any state that we store on the transferState datastore, is gonna get applied to the page using a similar <script> tag that I mentioned.
+The content(the data that we stored on transferState) which is usually JS objects, is gonna get rendered as escaped json in an html context, and when
+that content arrives at our frontend application, THEN, when we do transferState.get() , the content which is arrived and available on <script> tag,
+is gonna be available to transferState service.
+
+Summary: What's transferState service?
+It's an angular injectable service that allows us to transfer state between the server side application and the client side app. We do that by
+including any content that we want to transfer, directly on html payload in order for it(the content or transferring data) to be available on
+the client side.
+The goal is to avoid the application on the client at the startup time, needs to repeat certain http requests in order to display data that was
+ALREADY included on the initial html payload. So it's a performance optimization but it's ALSO for user experience because those repeated http
+requests on the client side to fetch again the data from api, might result in unwanted flickering effects which are situations when we see some
+content initially on the page, because it was included on the html payload, then the content disappears from the page because it's BEING fetched again
+from api and then it shows up one final time. So if you see that sort of unwanted effects on an ng universal app, then use transferState to solve it.
+*/
+/* SECTION 6. Angular Universal Production Deployment:
+20. 1. Angular Universal Production Deployment - Introduction:
+We want to deploy an ng universal app in production and we have 2 options when it comes to ng universal apps.
+We can opt for pre rendering the whole app or we can opt for having a runtime node server that server side renders the application.
+The simpler one is pre rendering.
+When we pre render our app, we're gonna create all the static html that we need at application build time and we're gonna left after the build is
+completed, with a static folder which contains all the files that we need in order to deploy the app to production. We simply need to take those
+static files and deploy them into any static server, such as for example an apache server or enginex server or even amazon web services S3 bucket that
+we can link for example to amazon web services cloud distribution.
+So any static server that allows us to deploy static files, will be good for deploying in production a pre rendered ng universal app.
+
+Now what if we want to do on the fly server side rendering instead of pre rendering?
+We're gonna need a node server running in production. So one of the main advantages of pre rendering our ng universal app is that we don't need a
+node server in production.
+However in order to do on the fly server side rendering, we're gonna need the server to run our server process which corresponds server.ts file.
+In order to run that express server which is configured in server.ts, we're gonna need a node server at runtime.
+
+So we wanna deploy our ng universal app to production, using a nodejs hosting platform, so we're gonna use google cloud platform and
+more specifically, google cloud app engine for node. So go to console. Now create a new project after going to google cloud app engine.
+
+Now we need google cloud CLI in order to deploy our project to production. Then we need to look how to setup google cloud sdk.
+
+21. 2. Preparing an Application for Deployment on Google App Engine for Node:
+Let's setup google cloud sdk which needed for deploying ng universal. After installing sdk, run: which gcloud for checking. Now we need to login to
+GC from command line. So run: gcloud auth login .
+
+Now add a configuration file called app.yaml . Yaml is a special type of configuration format and it's a lot different than json. In yaml,
+everything works with whitespaces and indentation and there write:
+runtime: nodejs10
+
+You could use that config file in order to specify things like the number of instances of your server that you want to deploy at the same time or the
+amount of memory that each instance can consume. But we're gonna leave the default options.
+
+Now go to package.json and do a couple of changes that are gonna allow us to build the app and deploy to production.
+Whenever a project gets deployed to GC app engine, the platform(GC) is gonna try to start up the server by running: npm run start. BUT! right now,
+the npm start command is starting our local development server(without looking for ssr and node server!). So we don't want that command to run in
+production. So let's rename that start command to sth else as a precaution. Call it start:dev . So now we have:
+"start:dev": "ng serve"
+
+When we deploy the app to production, we want to first do a complete server side build. So we want to build both the frontend of the app and then
+using that latest frontend, we want to create a new build of our ng universal bundle. In order to do that, we need to run build:ssr just before we
+launch the server.
+The GC devkit allows us to define a preparatory task in our package.json which is called prepare. That task is gonna get executed just before
+npm start which starts our server.
+"prepare": "npm run build:ssr" so it's gonna do a full server side build of our app in production and with that preparation step concluded, we're
+ready to start our server.
+So when the app gets deployed to google cloud app engine, the npm run start is gonna be called by the platform, in order to start our server.
+When that occurs, we want to serve our new node process in production mode and we can do that by running: serve:ssr which is gonna call node and
+gonna use the production main.js of our dist folder, in order to run the express server.
+"start": "npm run serve:ssr" and it's gonna start our node process in prod mode.
+now our app is ready to be deployed to GC app engine. Now let's deploy the app to production and test SSR in production.*/
+/* 22. 3. Angular Universal In Production - Final Demo:
+Make sure you're on same directory that contains package.json and app.yaml . Now run: gcloud init. Now choose 2. , then choose the google account that
+you used to create that project before.
+
+With that, our GC sdk is configured and ready to use. Now we have to deploy the app by running: gcloud app deploy .
+It will show the configuration of your app(app.yaml)
+
+You can look at the server logs by running: gcloud app logs tail -s default .
+
+Now in order to confirm that our app is server side rendered, look at view page source to inspect the html payload and search for body tag and
+you know all of that html generated on the server side.*/
